@@ -1,7 +1,22 @@
 @echo off
 cd /d "%~dp0"
 
-start "Backend" powershell -NoExit -Command "cd backend; conda activate bili; python main.py"
-start "Frontend" powershell -NoExit -Command "cd BillNote_frontend; npm run dev"
+echo [BiliNote] Starting backend...
+start /b "" cmd /c "cd backend && .\venv\Scripts\activate && python main.py"
 
-start http://localhost:3015/
+echo [BiliNote] Starting frontend...
+start /b "" cmd /c "cd BillNote_frontend && pnpm dev" > nul 2>&1
+
+timeout /t 4 /nobreak > nul
+start "" http://localhost:3015/
+
+echo.
+echo ========================================
+echo  All services started.
+echo  Close this window to stop all services.
+echo ========================================
+echo.
+
+:wait
+ping 127.0.0.1 -n 3 > nul
+goto wait
