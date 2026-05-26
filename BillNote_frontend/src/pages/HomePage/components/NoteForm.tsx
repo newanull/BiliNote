@@ -7,12 +7,15 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form.tsx'
-import { useEffect,useState } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useEffect, useRef, useState } from 'react'
+import { type FieldErrors, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import { Info, Loader2, Plus } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import FavoritesBrowser from './FavoritesBrowser'
+import type { FavVideo } from '@/services/bilibili'
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx'
 import { generateNote } from '@/services/note.ts'
 import { uploadFile } from '@/services/upload.ts'
@@ -44,6 +47,7 @@ import toast from 'react-hot-toast'
 /* -------------------- 校验 Schema -------------------- */
 const formSchema = z
   .object({
+    input_mode: z.enum(['url', 'favorites']).default('url'),
     video_url: z.string().optional(),
     platform: z.string().nonempty('请选择平台'),
     quality: z.enum(['fast', 'medium', 'slow']),
@@ -60,7 +64,9 @@ const formSchema = z
       .default([2, 2])
       .optional(),
   })
-  .superRefine(({ video_url, platform }, ctx) => {
+  .superRefine(({ input_mode, video_url, platform }, ctx) => {
+    if (input_mode === 'favorites') return
+
     if (platform === 'local') {
       if (!video_url) {
         ctx.addIssue({ code: 'custom', message: '本地视频路径不能为空', path: ['video_url'] })
@@ -141,6 +147,7 @@ const NoteForm = () => {
   const form = useForm<NoteFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      input_mode: 'url',
       platform: 'bilibili',
       quality: 'medium',
       model_name: modelList[0]?.model_name || '',
@@ -156,6 +163,10 @@ const NoteForm = () => {
   const platform = useWatch({ control: form.control, name: 'platform' }) as string
   const videoUnderstandingEnabled = useWatch({ control: form.control, name: 'video_understanding' })
   const editing = currentTask && currentTask.id
+  const [inputMode, setInputMode] = useState<'url' | 'favorites'>('url')
+  const [favoriteVideos, setFavoriteVideos] = useState<FavVideo[]>([])
+  const [isBatchSubmitting, setIsBatchSubmitting] = useState(false)
+  const isBatchSubmittingRef = useRef(false)
 
   const goModelAdd = () => {
     navigate("/settings/model");
@@ -167,12 +178,14 @@ const NoteForm = () => {
     return
   }, [])
   useEffect(() => {
+    if (isBatchSubmittingRef.current) return
     if (!currentTask) return
     const { formData } = currentTask
 
     console.log('currentTask.formData.platform:', formData.platform)
 
     form.reset({
+      input_mode: 'url',
       platform: formData.platform || 'bilibili',
       video_url: formData.video_url || '',
       model_name: formData.model_name || modelList[0]?.model_name || '',
@@ -186,6 +199,8 @@ const NoteForm = () => {
       grid_size: formData.grid_size ?? [2, 2],
       format: formData.format ?? [],
     })
+    setInputMode('url')
+    setFavoriteVideos([])
   }, [
     // 当下面任意一个变了，就重新 reset
     currentTaskId,
@@ -218,10 +233,73 @@ const NoteForm = () => {
   }
 
   const onSubmit = async (values: NoteFormValues) => {
-    console.log('Not even go here')
+    const provider = modelList.find(m => m.model_name === values.model_name)
+    if (!provider) {
+      toast.error('请先选择可用模型')
+      return
+    }
+
+    if (inputMode === 'favorites') {
+      if (favoriteVideos.length === 0) {
+        toast.error('请先选择收藏夹中的视频')
+        return
+      }
+
+      isBatchSubmittingRef.current = true
+      setIsBatchSubmitting(true)
+      const failedBvids = new Set<string>()
+      let successCount = 0
+
+      try {
+        for (let index = 0; index < favoriteVideos.length; index += 1) {
+          const video = favoriteVideos[index]
+          const payload = {
+            ...values,
+            input_mode: 'url' as const,
+            video_url: `https://www.bilibili.com/video/${video.bvid}/`,
+            platform: 'bilibili',
+            provider_id: provider.provider_id,
+            task_id: '',
+          }
+
+          try {
+            const data = await generateNote(payload)
+            addPendingTask(data.task_id, 'bilibili', payload)
+            successCount += 1
+          } catch (e: any) {
+            failedBvids.add(video.bvid)
+
+            if (e?.data?.reason === 'transcriber_model_not_ready') {
+              const downloading = e?.data?.downloading
+              toast.error(
+                downloading
+                  ? '转写模型正在下载中，请稍候再提交'
+                  : '转写模型尚未下载，请先去「音频转写配置」页下载',
+              )
+              if (!downloading) navigate('/settings/transcriber')
+              favoriteVideos.slice(index + 1).forEach(item => failedBvids.add(item.bvid))
+              break
+            }
+          }
+        }
+      } finally {
+        isBatchSubmittingRef.current = false
+        setIsBatchSubmitting(false)
+      }
+
+      if (failedBvids.size > 0) {
+        setFavoriteVideos(prev => prev.filter(video => failedBvids.has(video.bvid)))
+        toast.error(`已提交 ${successCount} 个，${failedBvids.size} 个提交失败`)
+      } else {
+        setFavoriteVideos([])
+        toast.success(`已提交 ${successCount} 个笔记任务`)
+      }
+      return
+    }
+
     const payload: NoteFormValues = {
       ...values,
-      provider_id: modelList.find(m => m.model_name === values.model_name)!.provider_id,
+      provider_id: provider.provider_id,
       task_id: currentTaskId || '',
     }
     if (currentTaskId) {
@@ -260,20 +338,33 @@ const NoteForm = () => {
     setCurrentTask(null)
   }
   const FormButton = () => {
-    const label = generating ? '正在生成…' : editing ? '重新生成' : '生成笔记'
+    const showCreateNew = Boolean(editing && inputMode === 'url')
+    const label = isBatchSubmitting
+      ? '提交中...'
+      : inputMode === 'favorites'
+        ? `生成 ${favoriteVideos.length} 个笔记`
+        : generating
+          ? '正在生成...'
+          : editing
+            ? '重新生成'
+            : '生成笔记'
+    const disabled =
+      generating ||
+      isBatchSubmitting ||
+      (inputMode === 'favorites' && favoriteVideos.length === 0)
 
     return (
       <div className="flex gap-2">
         <Button
           type="submit"
-          className={!editing ? 'w-full' : 'w-2/3' + ' bg-primary'}
-          disabled={generating}
+          className={!showCreateNew ? 'w-full' : 'w-2/3 bg-primary'}
+          disabled={disabled}
         >
-          {generating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {(generating || isBatchSubmitting) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {label}
         </Button>
 
-        {editing && (
+        {showCreateNew && (
           <Button type="button" variant="outline" className="w-1/3" onClick={handleCreateNew}>
             <Plus className="mr-2 h-4 w-4" />
             新建笔记
@@ -291,107 +382,133 @@ const NoteForm = () => {
           {/* 顶部按钮 */}
           <FormButton></FormButton>
 
-          {/* 视频链接 & 平台 */}
-          <SectionHeader title="视频链接" tip="支持 B 站、YouTube 等平台" />
-          <div className="flex gap-2">
-            {/* 平台选择 */}
+          {/* 输入方式 */}
+          <SectionHeader title="输入方式" tip="支持视频链接或从 B 站收藏夹选择" />
 
-            <FormField
-              control={form.control}
-              name="platform"
-              render={({ field }) => (
-                <FormItem>
-                  <Select
-                    disabled={!!editing}
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    defaultValue={field.value}
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-32">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {videoPlatforms?.map(p => (
-                        <SelectItem key={p.value} value={p.value}>
-                          <div className="flex items-center justify-center gap-2">
-                            <div className="h-4 w-4">{p.logo()}</div>
-                            <span>{p.label}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage style={{ display: 'none' }} />
-                </FormItem>
-              )}
-            />
-            {/* 链接输入 / 上传框 */}
-            <FormField
-              control={form.control}
-              name="video_url"
-              render={({ field }) => (
-                <FormItem className="flex-1">
-                  {platform === 'local' ? (
-                    <>
-                      <Input disabled={!!editing} placeholder="请输入本地视频路径" {...field} />
-                    </>
-                  ) : (
-                    <Input disabled={!!editing} placeholder="请输入视频网站链接" {...field} />
+          <Tabs
+            value={inputMode}
+            onValueChange={value => {
+              const mode = value as 'url' | 'favorites'
+              setInputMode(mode)
+              form.setValue('input_mode', mode)
+              if (mode === 'url') {
+                setFavoriteVideos([])
+              } else {
+                form.setValue('platform', 'bilibili')
+                form.setValue('video_url', '')
+              }
+            }}
+          >
+            <TabsList className="mb-3">
+              <TabsTrigger value="url">视频链接</TabsTrigger>
+              <TabsTrigger value="favorites">收藏夹</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="url">
+              {/* 平台选择 + 链接输入 */}
+              <div className="flex gap-2">
+                <FormField
+                  control={form.control}
+                  name="platform"
+                  render={({ field }) => (
+                    <FormItem>
+                      <Select
+                        disabled={!!editing}
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-32">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {videoPlatforms?.map(p => (
+                            <SelectItem key={p.value} value={p.value}>
+                              <div className="flex items-center justify-center gap-2">
+                                <div className="h-4 w-4">{p.logo()}</div>
+                                <span>{p.label}</span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage style={{ display: 'none' }} />
+                    </FormItem>
                   )}
-                  <FormMessage style={{ display: 'none' }} />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          <FormField
-            control={form.control}
-            name="video_url"
-            render={({ field }) => (
-              <FormItem className="flex-1">
-                {platform === 'local' && (
-                  <>
-                    <div
-                      className="hover:border-primary mt-2 flex h-40 cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-gray-300 transition-colors"
-                      onDragOver={e => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                      }}
-                      onDrop={e => {
-                        e.preventDefault()
-                        const file = e.dataTransfer.files?.[0]
-                        if (file) handleFileUpload(file, field.onChange)
-                      }}
-                      onClick={() => {
-                        const input = document.createElement('input')
-                        input.type = 'file'
-                        input.accept = 'video/*'
-                        input.onchange = e => {
-                          const file = (e.target as HTMLInputElement).files?.[0]
-                          if (file) handleFileUpload(file, field.onChange)
-                        }
-                        input.click()
-                      }}
-                    >
-                      {isUploading ? (
-                        <p className="text-center text-sm text-blue-500">上传中，请稍候…</p>
-                      ) : uploadSuccess ? (
-                        <p className="text-center text-sm text-green-500">上传成功！</p>
+                />
+                <FormField
+                  control={form.control}
+                  name="video_url"
+                  render={({ field }) => (
+                    <FormItem className="flex-1">
+                      {platform === 'local' ? (
+                        <Input disabled={!!editing} placeholder="请输入本地视频路径" {...field} />
                       ) : (
-                        <p className="text-center text-sm text-gray-500">
-                          拖拽文件到这里上传 <br />
-                          <span className="text-xs text-gray-400">或点击选择文件</span>
-                        </p>
+                        <Input disabled={!!editing} placeholder="请输入视频网站链接" {...field} />
                       )}
-                    </div>
-                  </>
+                      <FormMessage style={{ display: 'none' }} />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* 本地上传区域 */}
+              <FormField
+                control={form.control}
+                name="video_url"
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    {platform === 'local' && (
+                      <div
+                        className="hover:border-primary mt-2 flex h-40 cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-gray-300 transition-colors"
+                        onDragOver={e => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                        }}
+                        onDrop={e => {
+                          e.preventDefault()
+                          const file = e.dataTransfer.files?.[0]
+                          if (file) handleFileUpload(file, field.onChange)
+                        }}
+                        onClick={() => {
+                          const input = document.createElement('input')
+                          input.type = 'file'
+                          input.accept = 'video/*'
+                          input.onchange = e => {
+                            const file = (e.target as HTMLInputElement).files?.[0]
+                            if (file) handleFileUpload(file, field.onChange)
+                          }
+                          input.click()
+                        }}
+                      >
+                        {isUploading ? (
+                          <p className="text-center text-sm text-blue-500">上传中，请稍候…</p>
+                        ) : uploadSuccess ? (
+                          <p className="text-center text-sm text-green-500">上传成功！</p>
+                        ) : (
+                          <p className="text-center text-sm text-gray-500">
+                            拖拽文件到这里上传 <br />
+                            <span className="text-xs text-gray-400">或点击选择文件</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <FormMessage />
+                  </FormItem>
                 )}
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+              />
+            </TabsContent>
+
+            <TabsContent value="favorites">
+              <FavoritesBrowser
+                selectedVideos={favoriteVideos}
+                onSelectedVideosChange={setFavoriteVideos}
+                disabled={generating || isBatchSubmitting}
+              />
+            </TabsContent>
+          </Tabs>
           <div className="grid grid-cols-2 gap-2">
             {/* 模型选择 */}
             {
