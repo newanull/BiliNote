@@ -9,9 +9,17 @@ import {
   type BilibiliUser,
   type FavFolder,
   type FavVideo,
+  type FolderType,
   getFavoriteFolders,
   getFavoriteVideos,
 } from '@/services/bilibili'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface Props {
   selectedVideos: FavVideo[]
@@ -46,6 +54,7 @@ export default function FavoritesBrowser({
 }: Props) {
   const [view, setView] = useState<View>('folders')
 
+  const [folderType, setFolderType] = useState<FolderType>('created')
   const [loadingFolders, setLoadingFolders] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [user, setUser] = useState<BilibiliUser | null>(null)
@@ -68,7 +77,7 @@ export default function FavoritesBrowser({
     setLoadingFolders(true)
     setError(null)
     try {
-      const data = await getFavoriteFolders()
+      const data = await getFavoriteFolders(folderType)
       setUser(data.user)
       setFolders(data.folders || [])
     } catch (e: any) {
@@ -76,7 +85,7 @@ export default function FavoritesBrowser({
     } finally {
       setLoadingFolders(false)
     }
-  }, [])
+  }, [folderType])
 
   useEffect(() => {
     loadFolders()
@@ -93,7 +102,7 @@ export default function FavoritesBrowser({
       onSelectedVideosChange([])
 
       try {
-        const data = await getFavoriteVideos(folder.id, 1, PAGE_SIZE)
+        const data = await getFavoriteVideos(folder.id, 1, PAGE_SIZE, folder.season_id)
         setVideos(data.medias || [])
         setHasMore(data.has_more)
       } catch (e: any) {
@@ -110,7 +119,7 @@ export default function FavoritesBrowser({
     const nextPage = page + 1
     setLoadingMore(true)
     try {
-      const data = await getFavoriteVideos(selectedFolder.id, nextPage, PAGE_SIZE)
+      const data = await getFavoriteVideos(selectedFolder.id, nextPage, PAGE_SIZE, selectedFolder.season_id)
       setVideos(prev => [...prev, ...(data.medias || [])])
       setHasMore(data.has_more)
       setPage(nextPage)
@@ -149,6 +158,36 @@ export default function FavoritesBrowser({
     onSelectedVideosChange([])
   }
 
+  const handleFolderTypeChange = (value: FolderType) => {
+    setFolderType(value)
+    setView('folders')
+    setSelectedFolder(null)
+    setVideos([])
+    setFolders([])
+    setPage(1)
+    setError(null)
+    onSelectedVideosChange([])
+  }
+
+  const renderFolderHeader = () => {
+    if (!user) return null
+
+    return (
+      <div className="mb-2 flex items-center gap-2 text-xs text-neutral-500">
+        {user.face && <img src={imageProxy(user.face)} alt="" className="h-5 w-5 rounded-full" />}
+        <Select value={folderType} onValueChange={v => handleFolderTypeChange(v as FolderType)}>
+          <SelectTrigger className="h-7 w-fit gap-1 border-0 px-1 text-xs shadow-none">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="created">我创建的收藏夹</SelectItem>
+            <SelectItem value="collected">我追的合集/收藏夹</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
   if (loadingFolders) {
     return (
       <div className="flex h-32 items-center justify-center text-sm text-neutral-400">
@@ -160,12 +199,15 @@ export default function FavoritesBrowser({
 
   if (error && view === 'folders') {
     return (
-      <div className="flex flex-col items-center gap-3 py-8 text-center">
+      <div className="w-full min-w-0 max-w-full space-y-2 overflow-hidden">
+        {renderFolderHeader()}
+        <div className="flex flex-col items-center gap-3 py-8 text-center">
         <FolderOpen className="h-8 w-8 text-neutral-300" />
         <p className="text-sm text-neutral-500">{error}</p>
         <Button variant="outline" size="sm" onClick={loadFolders}>
           重试
         </Button>
+        </div>
       </div>
     )
   }
@@ -187,7 +229,18 @@ export default function FavoritesBrowser({
             {user.face && (
               <img src={imageProxy(user.face)} alt="" className="h-5 w-5 rounded-full" />
             )}
-            <span>{user.uname} 的收藏夹</span>
+            <Select
+              value={folderType}
+              onValueChange={v => setFolderType(v as FolderType)}
+            >
+              <SelectTrigger className="h-7 w-fit gap-1 border-0 px-1 text-xs shadow-none">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="created">{user.uname} 的收藏夹</SelectItem>
+                <SelectItem value="collected">{user.uname} 追的合集</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         )}
         <ScrollArea className="h-[260px] w-full max-w-full">

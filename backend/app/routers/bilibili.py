@@ -13,8 +13,10 @@ def _safe_error(client: BilibiliAPIClient, fallback: str, code: int):
 
 
 @router.get("/bilibili/favorites/folders")
-def get_favorite_folders():
-    """Get folders created by the configured Bilibili account."""
+def get_favorite_folders(
+    type: str = Query("created", description="created=我创建的, collected=我追的合集"),
+):
+    """Get folders of the configured Bilibili account (created or collected)."""
     client = BilibiliAPIClient()
     if not client.has_cookie():
         return R.error(
@@ -26,7 +28,12 @@ def get_favorite_folders():
     if user_info is None:
         return _safe_error(client, "获取用户信息失败，请检查 Cookie 是否有效", 401)
 
-    folders = client.get_created_folders(user_info.get("mid"))
+    mid = user_info.get("mid")
+    if type == "collected":
+        folders = client.get_collected_folders(mid)
+    else:
+        folders = client.get_created_folders(mid)
+
     if folders is None:
         return _safe_error(client, "获取收藏夹列表失败，请检查 Cookie 是否有效", 502)
 
@@ -38,11 +45,12 @@ def get_favorite_folders():
 
 @router.get("/bilibili/favorites/videos")
 def get_favorite_videos(
-    media_id: int = Query(..., description="收藏夹 media_id"),
+    media_id: int = Query(None, description="普通收藏夹 media_id"),
+    season_id: int = Query(None, description="合集 season_id"),
     pn: int = Query(1, ge=1),
-    ps: int = Query(20, ge=1, le=20),
+    ps: int = Query(20, ge=1, le=50),
 ):
-    """Get videos from one favorite folder, with pagination."""
+    """Get videos from a favorite folder or season, with pagination."""
     client = BilibiliAPIClient()
     if not client.has_cookie():
         return R.error(
@@ -50,8 +58,14 @@ def get_favorite_videos(
             code=401,
         )
 
-    result = client.get_folder_videos(media_id, pn=pn, ps=ps)
+    if season_id is not None:
+        result = client.get_season_videos(season_id, pn=pn, ps=ps)
+    elif media_id is not None:
+        result = client.get_folder_videos(media_id, pn=pn, ps=ps)
+    else:
+        return R.error(msg="请提供 media_id 或 season_id", code=400)
+
     if result is None:
-        return _safe_error(client, "获取收藏夹视频失败，请检查 media_id 是否正确", 502)
+        return _safe_error(client, "获取视频列表失败", 502)
 
     return R.success(data=result)
