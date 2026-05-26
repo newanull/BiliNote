@@ -331,7 +331,7 @@ export default function FavoritesBrowser({
                 <Card
                   key={video.id}
                   className={`w-full min-w-0 max-w-full cursor-pointer overflow-hidden py-1 transition-colors hover:bg-accent ${
-                    selected ? 'ring-primary ring-2' : ''
+                    selected ? 'border-primary bg-primary-light' : ''
                   } ${disabled ? 'pointer-events-none opacity-70' : ''}`}
                   onClick={() => toggleVideo(video)}
                 >
