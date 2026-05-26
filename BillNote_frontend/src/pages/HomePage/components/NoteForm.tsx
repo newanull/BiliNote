@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { Info, Loader2, Plus } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import FavoritesBrowser from './FavoritesBrowser'
-import type { FavVideo } from '@/services/bilibili'
+import type { FavFolder, FavVideo } from '@/services/bilibili'
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx'
 import { generateNote } from '@/services/note.ts'
 import { uploadFile } from '@/services/upload.ts'
@@ -165,6 +165,7 @@ const NoteForm = () => {
   const editing = currentTask && currentTask.id
   const [inputMode, setInputMode] = useState<'url' | 'favorites'>('url')
   const [favoriteVideos, setFavoriteVideos] = useState<FavVideo[]>([])
+  const [selectedFavFolder, setSelectedFavFolder] = useState<FavFolder | null>(null)
   const [isBatchSubmitting, setIsBatchSubmitting] = useState(false)
   const isBatchSubmittingRef = useRef(false)
 
@@ -249,6 +250,8 @@ const NoteForm = () => {
       setIsBatchSubmitting(true)
       const failedBvids = new Set<string>()
       let successCount = 0
+      const groupId = crypto.randomUUID()
+      const folderName = selectedFavFolder?.title || '收藏夹'
 
       try {
         for (let index = 0; index < favoriteVideos.length; index += 1) {
@@ -264,7 +267,7 @@ const NoteForm = () => {
 
           try {
             const data = await generateNote(payload)
-            addPendingTask(data.task_id, 'bilibili', payload)
+            addPendingTask(data.task_id, 'bilibili', payload, { groupId, folderName })
             successCount += 1
           } catch (e: any) {
             failedBvids.add(video.bvid)
@@ -505,6 +508,7 @@ const NoteForm = () => {
               <FavoritesBrowser
                 selectedVideos={favoriteVideos}
                 onSelectedVideosChange={setFavoriteVideos}
+                onFolderChange={setSelectedFavFolder}
                 disabled={generating || isBatchSubmitting}
               />
             </TabsContent>

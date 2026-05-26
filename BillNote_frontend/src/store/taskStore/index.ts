@@ -45,6 +45,8 @@ export interface Task {
   status: TaskStatus
   audioMeta: AudioMeta
   createdAt: string
+  groupId?: string
+  folderName?: string
   formData: {
     video_url: string
     link: undefined | boolean
@@ -59,7 +61,7 @@ export interface Task {
 interface TaskStore {
   tasks: Task[]
   currentTaskId: string | null
-  addPendingTask: (taskId: string, platform: string) => void
+  addPendingTask: (taskId: string, platform: string, formData: any, group?: { groupId: string; folderName: string }) => void
   updateTaskContent: (id: string, data: Partial<Omit<Task, 'id' | 'createdAt'>>) => void
   removeTask: (id: string) => void
   clearTasks: () => void
@@ -74,13 +76,15 @@ export const useTaskStore = create<TaskStore>()(
       tasks: [],
       currentTaskId: null,
 
-      addPendingTask: (taskId: string, platform: string, formData: any) =>
+      addPendingTask: (taskId: string, platform: string, formData: any, group?: { groupId: string; folderName: string }) =>
 
         set(state => ({
           tasks: [
             {
               formData: formData,
               id: taskId,
+              groupId: group?.groupId,
+              folderName: group?.folderName,
               status: 'PENDING',
               markdown: '',
               platform: platform,

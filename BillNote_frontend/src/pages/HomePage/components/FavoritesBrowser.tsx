@@ -24,6 +24,7 @@ import {
 interface Props {
   selectedVideos: FavVideo[]
   onSelectedVideosChange: (videos: FavVideo[]) => void
+  onFolderChange?: (folder: FavFolder | null) => void
   disabled?: boolean
 }
 
@@ -50,6 +51,7 @@ const imageProxy = (url?: string) => {
 export default function FavoritesBrowser({
   selectedVideos,
   onSelectedVideosChange,
+  onFolderChange,
   disabled = false,
 }: Props) {
   const [view, setView] = useState<View>('folders')
@@ -100,6 +102,7 @@ export default function FavoritesBrowser({
       setLoadingVideos(true)
       setError(null)
       onSelectedVideosChange([])
+      onFolderChange?.(folder)
 
       try {
         const data = await getFavoriteVideos(folder.id, 1, PAGE_SIZE, folder.season_id)
@@ -111,7 +114,7 @@ export default function FavoritesBrowser({
         setLoadingVideos(false)
       }
     },
-    [onSelectedVideosChange],
+    [onSelectedVideosChange, onFolderChange],
   )
 
   const loadMore = useCallback(async () => {
@@ -137,6 +140,7 @@ export default function FavoritesBrowser({
     setPage(1)
     setError(null)
     onSelectedVideosChange([])
+    onFolderChange?.(null)
   }
 
   const toggleVideo = (video: FavVideo) => {
@@ -167,6 +171,7 @@ export default function FavoritesBrowser({
     setPage(1)
     setError(null)
     onSelectedVideosChange([])
+    onFolderChange?.(null)
   }
 
   const renderFolderHeader = () => {
