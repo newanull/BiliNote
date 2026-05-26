@@ -2,6 +2,26 @@
 
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.3.3] - 2026-05-22
+
+### Fixed
+
+- **预构建 Docker 镜像数据持久化**：文档的 `docker run` 只挂了 `data/`（媒体缓存），而 SQLite 数据库（LLM 供应商配置 + 笔记历史）和笔记文件不在该卷下，导致删除 / 升级容器时丢失配置与历史。现将数据库重定向到 `/app/backend/data/bili_note.db`、笔记到 `data/note_results`（随 data 卷持久化）；README 更新为挂载 `data` / `config` / `static` / `models` 四个数据卷，并提示**勿**挂整个 `/app/backend`（命名卷会固化镜像内代码，导致 `docker pull` 升级不生效）。`docker-compose` 路径本就正确（`./backend:/app` 整目录绑挂），未受影响。
+
+## [2.3.2] - 2026-05-22
+
+### Fixed
+
+- **后端启动崩溃（Docker）**：`python:3.11-slim` 基础镜像升级到 Debian 13 / glibc 2.41 后，`ctranslate2` 4.5.0 预编译库带「可执行栈」标记被 glibc 拒绝加载（`cannot enable executable stack ... Invalid argument`）。由于 `from faster_whisper import WhisperModel` 在顶层 import，import 失败直接拖垮整个后端启动 → 容器反复重启。升级 `ctranslate2` 4.5.0→4.6.0（wheel 加入 `noexecstack` 链接标志，从二进制层根治）
+- **whisper 模型误报「离线模式找不到模型」**：下载（modelscope 自定义目录）与加载（faster-whisper HF cache）布局不一致导致命不中缓存。统一为下载 / 加载 / 完整性检测 / 损坏自愈都走 HF cache 布局，并向后兼容老 modelscope 目录
+- **桌面端构建产物版本恒为 2.0.0**：Release 工作流在 `pnpm tauri build` 前从 git tag 注入版本号到 `tauri.conf.json`，使产物版本与 Release 版本对齐
+
+## [2.3.1] - 2026-05-22
+
+### Changed
+
+- **更新微信交流群二维码**：旧二维码即将失效，替换 README 中 5 个交流群（群 1-5）的入群二维码。
+
 ## [2.3.0] - 2026-05-14
 
 主线：一波部署与运行时韧性专项——Docker / 桌面端 / 在线引擎三端的"装不上、起不来、跑一半挂"问题集中清理，并新增全局代理与转写模型就绪门禁。
